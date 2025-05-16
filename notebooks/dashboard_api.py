@@ -1,6 +1,7 @@
 # dashboard_api.py
 from fastapi import FastAPI, HTTPException
 from pymongo import MongoClient
+import pymongo
 from pydantic import BaseModel # Do walidacji typów, opcjonalne
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
@@ -96,7 +97,7 @@ async def get_dashboard_data():
         # Pobierz najnowszą akcję
         action_data = db[ACTION_COLLECTION].find_one(
             {'station_id': station_id},
-            sort=[('decision_timestamp', MongoClient.DESCENDING)]
+            sort=[('decision_timestamp', pymongo.DESCENDING)]
         )
         
         # Pobierz najnowszą prognozę (nie jest bezpośrednio potrzebna tutaj,
@@ -133,11 +134,11 @@ async def get_station_detail(station_id: str):
 
     action_data = db[ACTION_COLLECTION].find_one(
         {'station_id': station_id},
-        sort=[('decision_timestamp', MongoClient.DESCENDING)]
+        sort=[('decision_timestamp', pymongo.DESCENDING)]
     )
     forecast_data = db[FORECAST_COLLECTION].find_one(
         {'station_id': station_id},
-        sort=[('forecast_generated_at', MongoClient.DESCENDING)]
+        sort=[('forecast_generated_at', pymongo.DESCENDING)]
     )
 
     capacity = proc_data.get('capacity', 0)
@@ -190,15 +191,122 @@ async def get_station_detail(station_id: str):
         tech_status=proc_data.get('tech_status', 'BRAK DANYCH')
     )
 
+from fastapi import FastAPI, HTTPException
+from pymongo import MongoClient
+import pymongo # For pymongo.DESCENDING
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any # Ensure Dict and Any are imported
+from datetime import datetime, timedelta
+import logging # Ensure logging is imported
 
-@app.get("/reallocation_matrix_data")
+# Pydantic model for the reallocation output
+class ReallocationMove(BaseModel):
+    from_station_id: str
+    from_station_name: Optional[str] = "Unknown Station"
+    to_station_id: str
+    to_station_name: Optional[str] = "Unknown Station"
+    bikes_to_move: int
+
+
+@app.get("/reallocation_matrix_data", response_model=List[ReallocationMove])
 async def get_reallocation_matrix_data():
-    # TODO: Implementacja logiki macierzy relokacji
-    # Wymagałoby to algorytmu, który na podstawie akcji DOSTARCZ/ZABIERZ
-    # generuje konkretne przepływy rowerów między stacjami.
-    # Na razie zwracamy placeholder.
-    return {"message": "Endpoint /reallocation_matrix_data - Not Implemented Yet"}
+    db = get_db()
+    try:
+        all_actions_cursor = db[ACTION_COLLECTION].find({})
+        all_actions = list(all_actions_cursor) # Convert cursor to list
+    except Exception as e:
+        logging.error(f"Error fetching from ACTION_COLLECTION: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch station actions from database.")
 
+    sources = []  # Stations that can give bikes
+    sinks = []    # Stations that need bikes
+
+    if not all_actions:
+        logging.info("No actions found in ACTION_COLLECTION for reallocation.")
+        return []
+
+    for action_doc in all_actions:
+        num_to_move = action_doc.get('num_to_move', 0)
+        station_id = action_doc.get('station_id')
+        
+        if not station_id: # Skip if essential data is missing
+            logging.warning(f"Action document missing station_id, skipping: {action_doc.get('_id')}")
+            continue
+            
+        station_name = action_doc.get('name', f"Station ID {station_id}") # Use station_id if name is missing
+
+        if num_to_move < 0:  # Station has a surplus (ZABIERZ action means num_to_move is negative)
+            sources.append({
+                'station_id': station_id,
+                'name': station_name,
+                'available_bikes': -num_to_move  # Make it a positive supply count
+            })
+        elif num_to_move > 0:  # Station has a deficit (DOSTARCZ action means num_to_move is positive)
+            sinks.append({
+                'station_id': station_id,
+                'name': station_name,
+                'needed_bikes': num_to_move
+            })
+
+    reallocations: List[ReallocationMove] = []
+
+    if not sources or not sinks:
+        logging.info(f"Reallocation: Not enough sources ({len(sources)}) or sinks ({len(sinks)}) to perform moves.")
+        return []
+        
+    logging.info(f"Reallocation: Starting with {len(sources)} sources and {len(sinks)} sinks.")
+
+    # Simple greedy matching algorithm
+    source_idx = 0
+    sink_idx = 0
+
+    while source_idx < len(sources) and sink_idx < len(sinks):
+        source = sources[source_idx]
+        sink = sinks[sink_idx]
+
+        if source['available_bikes'] == 0: # Current source is exhausted
+            source_idx += 1
+            continue
+        
+        if sink['needed_bikes'] == 0: # Current sink is satisfied
+            sink_idx += 1
+            continue
+
+        # Determine how many bikes can be moved in this step
+        bikes_to_transfer = min(source['available_bikes'], sink['needed_bikes'])
+
+        if bikes_to_transfer > 0:
+            move = ReallocationMove(
+                from_station_id=source['station_id'],
+                from_station_name=source['name'],
+                to_station_id=sink['station_id'],
+                to_station_name=sink['name'],
+                bikes_to_move=bikes_to_transfer
+            )
+            reallocations.append(move)
+            logging.info(f"Reallocation move: {bikes_to_transfer} bikes from {source['name']} to {sink['name']}")
+
+            source['available_bikes'] -= bikes_to_transfer
+            sink['needed_bikes'] -= bikes_to_transfer
+        
+        # Move to the next source if the current one is exhausted
+        if source['available_bikes'] == 0:
+            source_idx += 1
+        
+        # Move to the next sink if the current one is satisfied
+        if sink['needed_bikes'] == 0:
+            sink_idx += 1
+            
+    if not reallocations:
+        logging.info("Reallocation: No actual moves generated despite having sources/sinks (e.g., all needs met or no supply).")
+    else:
+        logging.info(f"Reallocation: Generated {len(reallocations)} moves.")
+        
+    return reallocations
+
+# --- Heatmap Data Endpoint ---
+# Endpoint do pobierania danych do heatmapy
+# Można dodać filtr, np. tylko aktywne stacje
 @app.get("/ebike_heatmap_data")
 async def get_ebike_heatmap_data():
     db = get_db()
@@ -218,4 +326,4 @@ async def get_ebike_heatmap_data():
     return heatmap_data
 
 # Aby uruchomić API (z głównego katalogu projektu, gdzie jest ten plik):
-# uvicorn dashboard_api:app --reload
+# uvicorn dashboard_api:app --host 0.0.0.0 --port 8000 --reload

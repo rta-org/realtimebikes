@@ -77,7 +77,13 @@ def process_station_status(status_doc, db_client):
                 num_classic_bikes_available += count
     
     # Identyfikacja aktywnych stacji
-    is_renting = status_doc.get('is_renting', False)
+    raw_is_renting_value = status_doc.get('is_renting') # Get the raw value: 0, 1, True, False, or None if missing
+    
+    if raw_is_renting_value is None: # If the key 'is_renting' was completely missing in status_doc
+        is_renting = False
+    else: # If the key was present, convert its value to a strict boolean
+        is_renting = bool(raw_is_renting_value) # bool(0) is False, bool(1) is True, bool(True) is True, bool(False) is False
+
     tech_status = "OK" if is_renting else "SERWIS NEEDED"
 
     # Obliczanie Actual / Capacity
