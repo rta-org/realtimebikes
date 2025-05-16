@@ -1,31 +1,64 @@
 services:
   zookeeper:
-    image: confluentinc/cp-zookeeper:latest-ubi8
-    hostname: zookeeper
+    image: bitnami/zookeeper:latest
     container_name: zookeeper
     ports:
       - "2181:2181"
     environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
+      - ZOOKEEPER_CLIENT_PORT=2181
+      - ZOOKEEPER_TICK_TIME=2000
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    volumes:
+      - zookeeper_data:/bitnami/zookeeper
+
   broker:
-    image: confluentinc/cp-kafka:latest-ubi8
-    hostname: broker
+    image: bitnami/kafka:latest
     container_name: broker
-    depends_on:
-      - zookeeper
+    # depends_on: - zookeeper # Kafka no longer strictly depends on Zookeeper in KRaft mode
     ports:
-      - "29092:29092"
+      - "29092:29092" # For access from host
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:9092,PLAINTEXT_HOST://localhost:29092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      # KRaft settings
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller # Runs as both broker and controller
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,PLAINTEXT_HOST://:29092,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://broker:9092,PLAINTEXT_HOST://localhost:29092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT # Important for broker operations
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@broker:9093 # node_id@hostname:controller_port
+
+      # General Kafka settings (some were already there, ensure these specific values for single node KRaft)
+      - KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_CFG_GROUP_INITIAL_REBALANCE_DELAY_MS=0
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true # Can be helpful for dev
+
+      # Bitnami specific helper
+      - ALLOW_PLAINTEXT_LISTENER=yes
+
+      # KAFKA_CFG_BROKER_ID was for Zookeeper mode, KAFKA_CFG_NODE_ID replaces it for KRaft.
+      # KAFKA_CFG_ZOOKEEPER_CONNECT is not needed for KRaft mode.
+      # - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181 # Remove or comment out
+
+    volumes:
+      - kafka_data:/bitnami/kafka # Persistence for Kafka data/logs
+
+  mongo:
+    # ... (mongo configuration remains the same) ...
+    image: mongo:8.0.1
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=admin
+    volumes:
+      - mongo_data:/data/db
+
   datascience:
+    # ... (datascience configuration remains the same but ensure it doesn't have port 8000 conflict) ...
     build:
       context: .
       dockerfile: Dockerfile
@@ -34,14 +67,16 @@ services:
     volumes:
       - ./notebooks:/home/jovyan/notebooks
     ports:
-      - 8889:8888
-      - 4040:4040
+      - "8889:8888"
+      - "4040:4040"
+      - "8001:8000" # Assuming you changed this to 8001 due to previous port conflict, or ensure 8000 is free
     container_name: jupyter
-    depends_on:
+    depends_on: # Kafka (broker) should be ready before datascience starts
       - broker
-  mongo:
-    image: mongo:8.0.1
-    container_name: mongo
-    environment:
-      - MONGO_INITDB_ROOT_USERNAME=root
-      - MONGO_INITDB_ROOT_PASSWORD=admin
+      - mongo
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token=${JUPYTER_TOKEN} --NotebookApp.allow_origin='*' --NotebookApp.base_url=/
+
+volumes:
+  zookeeper_data:
+  kafka_data:
+  mongo_data:
