@@ -69,6 +69,7 @@ services:
     ports:
       - "8889:8888"
       - "4040:4040"
+      - "8501:8501"
       - "8001:8000" # Assuming you changed this to 8001 due to previous port conflict, or ensure 8000 is free
     container_name: jupyter
     depends_on: # Kafka (broker) should be ready before datascience starts

@@ -17,7 +17,8 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir pennylane==0.39 && \
     pip install --no-cache-dir pandas==2.0.3 numpy==1.24.4 scipy==1.11.3 matplotlib==3.8.0 sympy==1.12 seaborn==0.13.0 && \
     pip install --no-cache-dir kafka-python==2.0.2 confluent_kafka==2.6.0 && \
-    pip install --no-cache-dir pymongo==4.12.1
+    pip install --no-cache-dir pymongo==4.12.1 && \
+    pip install --no-cache-dir streamlit==1.32.2 folium==0.16.0 streamlit-folium==0.18.0 plotly==5.20.0
 
 RUN wget https://archive.apache.org/dist/kafka/3.7.1/kafka_2.12-3.7.1.tgz && \
     tar -xzf kafka_2.12-3.7.1.tgz && \
