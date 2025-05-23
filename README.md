@@ -69,3 +69,10 @@ Publikuje dane do Kafka topic
     * API będzie dostępne wewnątrz sieci Docker pod adresem `http://localhost:8000`.
     * Z zewnątrz (np. z Twojej przeglądarki lub Streamlit dashboardu) będzie dostępne przez port zmapowany w `compose.yaml` (`8001`):
         * Dokumentacja API (Swagger UI): `http://<ip-remote-host>:8001/docs`albo `http://localhost:8001/docs`
+
+     
+7. **Wizualizacja (dashboard - `dashboard.py`):**
+   Wizualizuje przetworzone dane.
+   ```bash
+    streamlit run dashboard.py
+   ```
